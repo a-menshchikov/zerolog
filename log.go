@@ -114,6 +114,7 @@
 package zerolog
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -122,7 +123,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var contextBufPool = &sync.Pool{
+	New: func() interface{} {
+		return bytes.NewBuffer(make([]byte, 0, 500))
+	},
+}
 
 // Level defines log levels.
 type Level int8
@@ -278,10 +286,12 @@ func (l Logger) Output(w io.Writer) Logger {
 
 // With creates a child logger with the field added to its context.
 func (l Logger) With() Context {
-	context := l.context
-	l.context = make([]byte, 0, 500)
-	if context != nil {
-		l.context = append(l.context, context...)
+	buf := contextBufPool.Get().(*bytes.Buffer)
+	ctx := l.context
+	l.context = append([]byte{}, buf.Bytes()...)
+	contextBufPool.Put(buf)
+	if ctx != nil {
+		l.context = append(l.context, ctx...)
 	} else {
 		// This is needed for AppendKey to not check len of input
 		// thus making it inlinable
@@ -299,7 +309,9 @@ func (l *Logger) UpdateContext(update func(c Context) Context) {
 		return
 	}
 	if cap(l.context) == 0 {
-		l.context = make([]byte, 0, 500)
+		buf := contextBufPool.Get().(*bytes.Buffer)
+		l.context = append([]byte{}, buf.Bytes()...)
+		contextBufPool.Put(buf)
 	}
 	if len(l.context) == 0 {
 		l.context = enc.AppendBeginMarker(l.context)
